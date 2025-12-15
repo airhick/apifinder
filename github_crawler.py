@@ -585,6 +585,13 @@ class GitHubCrawler:
         self.all_keys_file.write(f"{key}\n")
         self.all_keys_file.flush()  # Ensure it's written immediately
         
+        # Track key in current run if app is available
+        try:
+            import key_tracker
+            key_tracker.track_key(key)
+        except:
+            pass  # Silently fail if tracking not available
+        
         self.stats["keys_found"] += 1
         logger.info(f"🔑 Found {key_type} key: {key[:30]}...")
         
@@ -597,6 +604,13 @@ class GitHubCrawler:
                 # Save to working keys file
                 self.working_keys_file.write(f"{key}\n")
                 self.working_keys_file.flush()
+                
+                # Track working key too
+                try:
+                    import key_tracker
+                    key_tracker.track_key(key)
+                except:
+                    pass
                 
                 self.stats["keys_working"] += 1
                 logger.info(f"✅ WORKING {key_type} key: {key[:30]}... ({message})")
@@ -680,7 +694,7 @@ class GitHubCrawler:
                 return
             
             # Only log repos that have files (these are the ones we care about)
-            print(f"📁 {repo_url} - scrapped")
+            logger.info(f"📁 {repo_url} - scrapped")
             
             # Process each file - optimized for speed
             file_processing_times = []
@@ -729,7 +743,7 @@ class GitHubCrawler:
             avg_extract_time = sum(key_extraction_times) / len(key_extraction_times) if key_extraction_times else 0
             avg_test_time = sum(key_test_times) / len(key_test_times) if key_test_times else 0
             
-            print(f"  ⏱️  Repo time: {repo_time:.3f}s | Files: {len(files)} | Files fetch: {files_time:.3f}s | Avg file: {avg_file_time:.3f}s | Content: {avg_content_time:.3f}s | Extract: {avg_extract_time:.3f}s | Test: {avg_test_time:.3f}s")
+            logger.info(f"  ⏱️  Repo time: {repo_time:.3f}s | Files: {len(files)} | Files fetch: {files_time:.3f}s | Avg file: {avg_file_time:.3f}s | Content: {avg_content_time:.3f}s | Extract: {avg_extract_time:.3f}s | Test: {avg_test_time:.3f}s")
             
         except Exception as e:
             # Only log critical errors
@@ -953,15 +967,15 @@ class GitHubCrawler:
         """Print crawling statistics"""
         elapsed = time.time() - self.stats["start_time"]
         
-        print(f"\n{'='*60}")
-        print(f"  CRAWLING STATISTICS")
-        print(f"{'='*60}")
-        print(f"Repos crawled: {self.stats['repos_crawled']}")
-        print(f"Files processed: {self.stats['files_processed']}")
-        print(f"Keys found: {self.stats['keys_found']}")
-        print(f"Keys tested: {self.stats['keys_tested']}")
-        print(f"Working keys: {self.stats['keys_working']}")
-        print(f"Time elapsed: {elapsed:.2f} seconds")
-        print(f"Average rate: {self.stats['repos_crawled']/elapsed:.2f} repos/sec" if elapsed > 0 else "")
-        print(f"{'='*60}\n")
+        logger.info(f"\n{'='*60}")
+        logger.info(f"  CRAWLING STATISTICS")
+        logger.info(f"{'='*60}")
+        logger.info(f"Repos crawled: {self.stats['repos_crawled']}")
+        logger.info(f"Files processed: {self.stats['files_processed']}")
+        logger.info(f"Keys found: {self.stats['keys_found']}")
+        logger.info(f"Keys tested: {self.stats['keys_tested']}")
+        logger.info(f"Working keys: {self.stats['keys_working']}")
+        logger.info(f"Time elapsed: {elapsed:.2f} seconds")
+        logger.info(f"Average rate: {self.stats['repos_crawled']/elapsed:.2f} repos/sec" if elapsed > 0 else "")
+        logger.info(f"{'='*60}\n")
 

