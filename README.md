@@ -109,6 +109,50 @@ The web scraping method bypasses GitHub API rate limits entirely! The tool inclu
 
 This tool is provided for educational and security research purposes. The authors are not responsible for any misuse of this tool or any keys found using it. Always ensure you have permission before accessing or using any API keys.
 
+## Deployment to Render
+
+### Quick Deploy via GitHub
+
+1. **Push to GitHub**:
+   ```bash
+   git add .
+   git commit -m "Ready for Render deployment"
+   git push origin main
+   ```
+
+2. **Deploy on Render**:
+   - Go to [Render Dashboard](https://dashboard.render.com)
+   - Click "New +" → "Web Service"
+   - Connect your GitHub account
+   - Select your repository
+   - Render will auto-detect `render.yaml` and configure everything
+   - Click "Create Web Service"
+
+3. **Access Your App**:
+   - Once deployed, you'll get a URL like: `https://api-key-finder.onrender.com`
+   - Open it in your browser to see the dashboard
+
+### Manual Configuration (if needed)
+
+If you prefer manual setup:
+- **Build Command**: `pip install -r requirements.txt`
+- **Start Command**: `gunicorn app:app --bind 0.0.0.0:$PORT --workers 2 --threads 2 --timeout 120`
+- **Python Version**: 3.12.0 (specified in `runtime.txt`)
+
+### Environment Variables (Optional)
+
+Set these in Render dashboard under "Environment":
+- `REPOS_PER_SECOND`: Speed of crawling (default: 100.0)
+- `MAX_REPOS`: Maximum repos to scan (default: 10000)
+
+### Features After Deployment
+
+✅ **Web Dashboard**: Beautiful interface to control the crawler  
+✅ **Real-time Logs**: See all logs in the web interface  
+✅ **Statistics**: Track progress in real-time  
+✅ **Start/Stop**: Control the crawler from the web interface  
+✅ **Working Keys**: View recently found working API keys  
+
 ## License
 
 This project is provided as-is for educational purposes.
