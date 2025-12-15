@@ -216,45 +216,128 @@ def get_stats():
 
 @app.route('/api/keys/found', methods=['GET'])
 def get_found_keys():
-    """Get list of all found keys"""
+    """Get list of all found keys with type information"""
     try:
         keys = []
         if os.path.exists("found_api_keys.txt"):
             with open("found_api_keys.txt", "r") as f:
                 keys = [line.strip() for line in f if line.strip()]
         
-        # Mark keys from current run
+        # Read working keys to check which are working
+        working_keys = set()
+        if os.path.exists("working_api_keys.txt"):
+            with open("working_api_keys.txt", "r") as f:
+                working_keys = set(line.strip() for line in f if line.strip())
+        
+        # Mark keys from current run and identify type
         result = []
+        key_types_count = {}
         for key in keys:
             is_current_run = key in app_state["current_run_keys"]
+            is_working = key in working_keys
+            key_type = identify_key_type(key) or "unknown"
+            
+            # Count by type
+            if key_type not in key_types_count:
+                key_types_count[key_type] = {"total": 0, "working": 0}
+            key_types_count[key_type]["total"] += 1
+            if is_working:
+                key_types_count[key_type]["working"] += 1
+            
             result.append({
                 "key": key,
-                "is_current_run": is_current_run
+                "key_type": key_type,
+                "is_current_run": is_current_run,
+                "is_working": is_working
             })
         
-        return jsonify({"keys": result, "count": len(result)})
+        return jsonify({
+            "keys": result, 
+            "count": len(result),
+            "by_type": key_types_count
+        })
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
 @app.route('/api/keys/working', methods=['GET'])
 def get_working_keys():
-    """Get list of working keys"""
+    """Get list of working keys with type information"""
     try:
         keys = []
         if os.path.exists("working_api_keys.txt"):
             with open("working_api_keys.txt", "r") as f:
                 keys = [line.strip() for line in f if line.strip()]
         
-        # Mark keys from current run
+        # Mark keys from current run and identify type
         result = []
+        key_types_count = {}
         for key in keys:
             is_current_run = key in app_state["current_run_keys"]
+            key_type = identify_key_type(key) or "unknown"
+            
+            # Count by type
+            if key_type not in key_types_count:
+                key_types_count[key_type] = 0
+            key_types_count[key_type] += 1
+            
             result.append({
                 "key": key,
+                "key_type": key_type,
                 "is_current_run": is_current_run
             })
         
-        return jsonify({"keys": result, "count": len(result)})
+        return jsonify({
+            "keys": result, 
+            "count": len(result),
+            "by_type": key_types_count
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/stats/detailed', methods=['GET'])
+def get_detailed_stats():
+    """Get detailed statistics including conversion rates"""
+    try:
+        found_keys = []
+        working_keys = []
+        
+        if os.path.exists("found_api_keys.txt"):
+            with open("found_api_keys.txt", "r") as f:
+                found_keys = [line.strip() for line in f if line.strip()]
+        
+        if os.path.exists("working_api_keys.txt"):
+            with open("working_api_keys.txt", "r") as f:
+                working_keys = [line.strip() for line in f if line.strip()]
+        
+        working_set = set(working_keys)
+        
+        # Calculate stats by type
+        stats_by_type = {}
+        for key in found_keys:
+            key_type = identify_key_type(key) or "unknown"
+            if key_type not in stats_by_type:
+                stats_by_type[key_type] = {"found": 0, "working": 0}
+            stats_by_type[key_type]["found"] += 1
+            if key in working_set:
+                stats_by_type[key_type]["working"] += 1
+        
+        # Calculate conversion rates
+        for key_type in stats_by_type:
+            found = stats_by_type[key_type]["found"]
+            working = stats_by_type[key_type]["working"]
+            stats_by_type[key_type]["conversion_rate"] = (working / found * 100) if found > 0 else 0
+        
+        # Overall stats
+        total_found = len(found_keys)
+        total_working = len(working_keys)
+        overall_conversion = (total_working / total_found * 100) if total_found > 0 else 0
+        
+        return jsonify({
+            "total_found": total_found,
+            "total_working": total_working,
+            "conversion_rate": round(overall_conversion, 2),
+            "by_type": stats_by_type
+        })
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
