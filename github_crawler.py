@@ -548,23 +548,15 @@ class GitHubCrawler:
                             valid_length = True
                         elif key_type == 'openai_project' and key_clean.startswith('sk-proj-') and len(key_clean) >= 57:
                             valid_length = True
-                        elif key_type == 'anthropic' and key_clean.startswith('sk-ant-api03-') and len(key_clean) >= 95:
+                        elif key_type == 'anthropic' and (key_clean.startswith('sk-ant-') or key_clean.startswith('sk-ant-api03-')):
                             valid_length = True
                         elif key_type == 'google_gemini' and key_clean.startswith('AIza') and len(key_clean) == 39:
                             valid_length = True
                         elif key_type == 'huggingface' and key_clean.startswith('hf_') and len(key_clean) == 37:
                             valid_length = True
-                        elif key_type == 'perplexity' and key_clean.startswith('pplx-') and len(key_clean) >= 45:
-                            valid_length = True
                         elif key_type == 'cohere' and len(key_clean) == 40:
                             valid_length = True
-                        elif key_type == 'pinecone' and len(key_clean) == 36 and '-' in key_clean:
-                            valid_length = True
-                        elif key_type == 'aws' and (key_clean.startswith('AKIA') or len(key_clean) == 40):
-                            valid_length = True
-                        elif key_type == 'github' and (key_clean.startswith('ghp_') or key_clean.startswith('github_pat_')):
-                            valid_length = True
-                        elif key_type == 'stripe' and (key_clean.startswith('sk_live_') or key_clean.startswith('pk_live_')):
+                        elif key_type == 'pinecone' and ((len(key_clean) == 36 and '-' in key_clean) or key_clean.startswith('pc-')):
                             valid_length = True
                         
                         if valid_length:
