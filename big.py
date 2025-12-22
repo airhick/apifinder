@@ -2,16 +2,14 @@ import requests
 import gzip
 import json
 import io
-from datetime import datetime, timedelta
-import concurrent.futures
-import time
+from datetime import datetime, timedelta, timezone
 
 def save_repo_urls():
     """
     Fetch recent repositories (updated in the last week) from GitHub Archive
     """
     # Calculate date threshold (1 week ago)
-    one_week_ago = datetime.utcnow() - timedelta(days=7)
+    one_week_ago = datetime.now(timezone.utc) - timedelta(days=7)
     print(f"📅 Looking for repositories updated after: {one_week_ago.strftime('%Y-%m-%d %H:%M:%S')} UTC")
     
     found_urls = set()  # Use a set to avoid duplicates
@@ -19,17 +17,18 @@ def save_repo_urls():
     
     # Get recent archive files (last 7 days, checking multiple hours per day)
     base_url = "https://data.gharchive.org"
-    current_date = datetime.utcnow()
+    current_date = datetime.now(timezone.utc)
     
-    # Try to fetch from recent hours (last 7 days, checking 4 hours per day for speed)
+    # Try to fetch from recent hours (last 7 days, checking multiple hours per day)
     hours_to_check = []
     for day_offset in range(7):  # Last 7 days
         check_date = current_date - timedelta(days=day_offset)
-        # Check 4 hours per day (0, 6, 12, 18) for better coverage
-        for hour in [0, 6, 12, 18]:
+        # Check more hours per day for better coverage (every 3 hours)
+        for hour in range(0, 24, 3):  # 0, 3, 6, 9, 12, 15, 18, 21
             hours_to_check.append((check_date, hour))
     
     print(f"📥 Checking {len(hours_to_check)} archive files for recent repositories...")
+    print(f"🎯 Target: {target_count} repositories\n")
     
     for check_date, hour in hours_to_check:
         if len(found_urls) >= target_count:
@@ -76,7 +75,7 @@ def save_repo_urls():
                                         event_date = datetime.strptime(f"{date_part} {time_part}", "%Y-%m-%d %H:%M:%S")
                                         
                                         # Only include events from the last week
-                                        if event_date >= one_week_ago:
+                                        if event_date >= one_week_ago.replace(tzinfo=None):
                                             repo = event.get('repo', {})
                                             repo_name = repo.get('name')
                                             if repo_name:
@@ -93,7 +92,7 @@ def save_repo_urls():
                         except (json.JSONDecodeError, KeyError):
                             continue
                     
-                    print(f"✅ {repos_found_in_file} repos found ({events_processed} events processed)")
+                    print(f"✅ {repos_found_in_file} repos found ({events_processed} events processed) | Total: {len(found_urls)}/{target_count}")
                         
         except requests.exceptions.RequestException as e:
             print(f"❌ Error: {str(e)[:50]}")
@@ -102,69 +101,18 @@ def save_repo_urls():
             print(f"❌ Error: {str(e)[:50]}")
             continue
 
-    # 2. Filter repositories with 0 stars
-    print(f"\n🔍 Checking star count for {len(found_urls)} repositories...")
-    print(f"   Filtering for repositories with 0 stars only...")
-    
-    zero_star_repos = []
-    checked_count = 0
-    
-    def check_repo_stars(repo_url):
-        """Check if a repository has 0 stars"""
-        try:
-            # Extract repo name from URL: https://github.com/username/repo.git
-            repo_name = repo_url.replace('https://github.com/', '').replace('.git', '')
-            
-            # Use GitHub API to check stars (no auth needed for public repos)
-            api_url = f"https://api.github.com/repos/{repo_name}"
-            response = requests.get(api_url, timeout=5, headers={'Accept': 'application/vnd.github.v3+json'})
-            
-            if response.status_code == 200:
-                repo_data = response.json()
-                stars = repo_data.get('stargazers_count', -1)
-                return repo_url, stars == 0
-            elif response.status_code == 404:
-                # Repo doesn't exist or is private
-                return repo_url, False
-            else:
-                # Rate limited or other error - skip for now
-                return repo_url, None
-        except Exception as e:
-            return repo_url, None
-    
-    # Check stars in parallel (20 workers for API calls)
-    with concurrent.futures.ThreadPoolExecutor(max_workers=20) as executor:
-        future_to_url = {executor.submit(check_repo_stars, url): url for url in found_urls}
-        
-        for future in concurrent.futures.as_completed(future_to_url):
-            checked_count += 1
-            try:
-                repo_url, has_zero_stars = future.result()
-                
-                if has_zero_stars is True:
-                    zero_star_repos.append(repo_url)
-                
-                # Progress update every 100 repos
-                if checked_count % 100 == 0:
-                    print(f"   ✅ Checked {checked_count}/{len(found_urls)} repos | Found {len(zero_star_repos)} with 0 stars")
-                
-                # Rate limiting: small delay to avoid hitting GitHub API limits
-                if checked_count % 30 == 0:
-                    time.sleep(1)  # 1 second pause every 30 requests
-                    
-            except Exception as e:
-                continue
-    
-    # 3. Save to a file
-    print(f"\n✅ Found {len(zero_star_repos)} repositories with 0 stars (updated in last week).")
+    # Save to file
+    print(f"\n✅ Found {len(found_urls)} unique recent repositories (updated in last week).")
     with open("repo_list.txt", "w") as f:
-        for url in zero_star_repos:
+        for url in found_urls:
             f.write(url + "\n")
     print(f"💾 Saved list to 'repo_list.txt'")
     
-    if len(zero_star_repos) < target_count:
-        print(f"⚠️  Only found {len(zero_star_repos)} repos with 0 stars (target was {target_count})")
-        print(f"   This is normal when filtering for recent repos with 0 stars only.")
+    if len(found_urls) < target_count:
+        print(f"⚠️  Only found {len(found_urls)} repos (target was {target_count})")
+        print(f"   This is normal when filtering for recent repos only.")
+    else:
+        print(f"🎉 Successfully found {len(found_urls)} repos! Target reached!")
 
 if __name__ == "__main__":
     save_repo_urls()

