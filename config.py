@@ -49,6 +49,28 @@ API_KEY_PATTERNS = {
         re.compile(r'\b(?:PINECONE|pinecone)[_-]?KEY[=:]\s*["\']?([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})["\']?', re.IGNORECASE),
         re.compile(r'["\']?([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})["\']?\s*[=:]\s*(?:PINECONE|pinecone)', re.IGNORECASE),
     ],
+    
+    # Perplexity - API Key: pplx- prefix followed by alphanumeric characters
+    "perplexity": [
+        re.compile(r'\bpplx-[a-zA-Z0-9]{32,}\b'),  # pplx- + alphanumeric
+        re.compile(r'\b(?:PERPLEXITY|perplexity)[_-]?API[_-]?KEY[=:]\s*["\']?(pplx-[a-zA-Z0-9]{32,})["\']?', re.IGNORECASE),
+        re.compile(r'\b(?:PERPLEXITY|perplexity)[_-]?KEY[=:]\s*["\']?(pplx-[a-zA-Z0-9]{32,})["\']?', re.IGNORECASE),
+    ],
+    
+    # Mistral AI - API Key: alphanumeric string, typically starts with specific patterns
+    "mistral": [
+        re.compile(r'\b(?:MISTRAL|mistral)[_-]?API[_-]?KEY[=:]\s*["\']?([a-zA-Z0-9]{32,})["\']?', re.IGNORECASE),
+        re.compile(r'\b(?:MISTRAL|mistral)[_-]?KEY[=:]\s*["\']?([a-zA-Z0-9]{32,})["\']?', re.IGNORECASE),
+        # Common Mistral key format (if known pattern exists)
+        re.compile(r'\b([a-zA-Z0-9]{40,})\b.*(?:mistral|MISTRAL)', re.IGNORECASE),
+    ],
+    
+    # Groq - API Key: gsk_ prefix followed by alphanumeric characters
+    "groq": [
+        re.compile(r'\bgsk_[a-zA-Z0-9]{32,}\b'),  # gsk_ + alphanumeric
+        re.compile(r'\b(?:GROQ|groq)[_-]?API[_-]?KEY[=:]\s*["\']?(gsk_[a-zA-Z0-9]{32,})["\']?', re.IGNORECASE),
+        re.compile(r'\b(?:GROQ|groq)[_-]?KEY[=:]\s*["\']?(gsk_[a-zA-Z0-9]{32,})["\']?', re.IGNORECASE),
+    ],
 }
 
 # API Validation Endpoints
@@ -60,6 +82,9 @@ API_VALIDATION_ENDPOINTS = {
     "huggingface": "https://api-inference.huggingface.co/models",
     "cohere": "https://api.cohere.ai/v1/models",
     "pinecone": None,  # Pinecone requires special handling
+    "perplexity": "https://api.perplexity.ai/models",
+    "mistral": "https://api.mistral.ai/v1/models",
+    "groq": "https://api.groq.com/openai/v1/models",
 }
 
 # GitHub Search Queries - Focused on target API key types
@@ -108,6 +133,23 @@ GITHUB_SEARCH_QUERIES = [
     "pinecone key",
     "pc-",
     "PINECONE_API_KEY",
+    
+    # Perplexity specific
+    "perplexity api",
+    "perplexity key",
+    "pplx-",
+    "PERPLEXITY_API_KEY",
+    
+    # Mistral AI specific
+    "mistral api",
+    "mistral key",
+    "MISTRAL_API_KEY",
+    
+    # Groq specific
+    "groq api",
+    "groq key",
+    "gsk_",
+    "GROQ_API_KEY",
     
     # Environment variable patterns
     "process.env",

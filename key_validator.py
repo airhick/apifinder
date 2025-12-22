@@ -127,6 +127,63 @@ class KeyValidator:
         else:
             return False, "Invalid Pinecone key format"
     
+    def validate_perplexity(self, key: str) -> Tuple[bool, str]:
+        """Validate Perplexity API key"""
+        try:
+            headers = {"Authorization": f"Bearer {key}"}
+            response = requests.get(
+                "https://api.perplexity.ai/models",
+                headers=headers,
+                timeout=10
+            )
+            if response.status_code == 200:
+                return True, "Valid Perplexity key"
+            elif response.status_code == 401:
+                return False, "Invalid Perplexity key"
+            else:
+                return False, f"Status: {response.status_code}"
+        except Exception as e:
+            return False, f"Error: {str(e)}"
+    
+    def validate_mistral(self, key: str) -> Tuple[bool, str]:
+        """Validate Mistral AI API key"""
+        try:
+            headers = {
+                "Authorization": f"Bearer {key}",
+                "Content-Type": "application/json"
+            }
+            response = requests.get(
+                "https://api.mistral.ai/v1/models",
+                headers=headers,
+                timeout=10
+            )
+            if response.status_code == 200:
+                return True, "Valid Mistral AI key"
+            elif response.status_code == 401:
+                return False, "Invalid Mistral AI key"
+            else:
+                return False, f"Status: {response.status_code}"
+        except Exception as e:
+            return False, f"Error: {str(e)}"
+    
+    def validate_groq(self, key: str) -> Tuple[bool, str]:
+        """Validate Groq API key"""
+        try:
+            headers = {"Authorization": f"Bearer {key}"}
+            response = requests.get(
+                "https://api.groq.com/openai/v1/models",
+                headers=headers,
+                timeout=10
+            )
+            if response.status_code == 200:
+                return True, "Valid Groq key"
+            elif response.status_code == 401:
+                return False, "Invalid Groq key"
+            else:
+                return False, f"Status: {response.status_code}"
+        except Exception as e:
+            return False, f"Error: {str(e)}"
+    
     def validate_key(self, key_type: str, key: str) -> Tuple[bool, str]:
         """
         Validate a single API key based on its type
@@ -147,6 +204,9 @@ class KeyValidator:
             "huggingface": self.validate_huggingface,
             "cohere": self.validate_cohere,
             "pinecone": self.validate_pinecone,
+            "perplexity": self.validate_perplexity,
+            "mistral": self.validate_mistral,
+            "groq": self.validate_groq,
         }
         
         if key_type in validation_methods:
